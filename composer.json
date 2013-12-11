@@ -4,7 +4,8 @@
 	"description" : "Payment Bundle providing access to the PayPal REST API",
 	"keywords" : [
 		"payment",
-		"paypal"
+		"paypal",
+		"paypal REST"
 	],
 	"homepage" : "https://github.com/iBiryukov/jms-paypal-rest-bundle",
 	"license" : "Apache2",
@@ -16,7 +17,8 @@
 	"require" : {
 		"php" : ">=5.3.2",
 		"symfony/framework-bundle" : "~2.0",
-		"jms/payment-core-bundle" : "~1.0"
+		"jms/payment-core-bundle" : "~1.0",
+		"paypal/rest-api-sdk-php" : "~0.7"
 	},
 	"require-dev" : {
 		"symfony/browser-kit" : "*"
