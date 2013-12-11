@@ -1,5 +1,4 @@
 <?php
-
 namespace Wanawork\JMS\PaypalRestBundle\DependencyInjection;
 
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -19,10 +18,46 @@ class WanaworkJMSPaypalRestExtension extends Extension
      */
     public function load(array $configs, ContainerBuilder $container)
     {
-        $configuration = new Configuration();
-        $config = $this->processConfiguration($configuration, $configs);
-
+        if (!$container->hasParameter('kernel.logs_dir')) {
+            $container->setParameter('kernel.logs_dir', sys_get_temp_dir());
+        }
+        
         $loader = new Loader\XmlFileLoader($container, new FileLocator(__DIR__.'/../Resources/config'));
         $loader->load('services.xml');
+        
+        $configuration = new Configuration();
+        $config = $this->processConfiguration($configuration, $configs);
+        
+        if (isset($config['paypal']['http']['retry'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.paypal.http.retry', $config['paypal']['http']['retry']);    
+        }
+
+        if (isset($config['paypal']['http']['connection_timeout'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.paypal.http.connection_timeout', $config['paypal']['http']['connection_timeout']);
+        }
+        
+        if (isset($config['paypal']['log']['log_enabled'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.paypal.log.log_enabled', $config['paypal']['log']['log_enabled']);
+        }
+        
+        if (isset($config['paypal']['log']['file_name'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.paypal.log.file_name', $config['paypal']['log']['file_name']);
+        }
+        
+        if (isset($config['paypal']['log']['log_level'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.paypal.log.log_level', $config['paypal']['log']['log_level']);
+        }
+        
+        if (isset($config['paypal']['service']['mode'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.paypal.service.mode', $config['paypal']['service']['mode']);
+        }
+        
+        if (isset($config['secret'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.secret', $config['secret']);
+        }
+        
+        if (isset($config['client_id'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.client_id', $config['client_id']);
+        }
     }
 }

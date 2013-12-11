@@ -4,6 +4,30 @@
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="http://symfony.com/schema/dic/services http://symfony.com/schema/dic/services/services-1.0.xsd">
 
+	<parameters>
+		<parameter key="wanawork_jms_paypal_rest.plugin.class">Wanawork\JMS\PaypalRestBundle\Plugin\PaypalRestPlugin</parameter>
+	
+		<parameter key="wanawork_jms_paypal_rest.paypal.http.connection_timeout">20</parameter>
+		<parameter key="wanawork_jms_paypal_rest.paypal.http.retry">1</parameter>
+		<parameter key="wanawork_jms_paypal_rest.paypal.service.mode">sandbox</parameter>
+		<parameter key="wanawork_jms_paypal_rest.paypal.log.log_enabled">true</parameter>
+		<parameter key="wanawork_jms_paypal_rest.paypal.log.file_name">%kernel.logs_dir%/paypal.log</parameter>
+		<parameter key="wanawork_jms_paypal_rest.paypal.log.log_level">FINE</parameter>
+		
+		<!-- 
+		Generic auth details provided by paypal samples
+		https://github.com/paypal/rest-api-sdk-php/blob/master/sample/bootstrap.php
+		 -->
+		<parameter key="wanawork_jms_paypal_rest.client_id">EBWKjlELKMYqRNQ6sYvFo64FtaRLRR5BdHEESmha49TM</parameter>
+		<parameter key="wanawork_jms_paypal_rest.secret">EO422dn3gQLgDbuwqTjzrFgFtaRLRR5BdHEESmha49TM</parameter>
+		
+	</parameters>
+	
+	<services>
+		<service id="payment.plugin.paypal_rest" class="%wanawork_jms_paypal_rest.plugin.class%">
+		    <tag name="payment.plugin" />
+		</service>
+	</services>
     <!--
     <parameters>
         <parameter key="wanawork_jms_paypal_rest.example.class">Wanawork\JMS\PaypalRestBundle\Example</parameter>

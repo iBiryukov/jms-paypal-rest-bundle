@@ -1,0 +1,7 @@
+parameters:
+  wanawork_jms_paypal_rest:
+    plugin:
+      class: Wanawork\JMS\PaypalRestBundle\Plugin\PaypalRestPlugin
+ 
+services:
+  
