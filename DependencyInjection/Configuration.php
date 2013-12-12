@@ -24,7 +24,8 @@ class Configuration implements ConfigurationInterface
             
                 ->variableNode('secret')->isRequired()->cannotBeEmpty()->end()
                 ->variableNode('client_id')->isRequired()->cannotBeEmpty()->end()
-                        
+                ->variableNode('cancel_url')->isRequired()->cannotBeEmpty()->end()
+                ->variableNode('success_url')->isRequired()->cannotBeEmpty()->end()
                 ->arrayNode('paypal')
                     ->children()
                         ->arrayNode('service')

@@ -4,6 +4,19 @@ namespace Wanawork\JMS\PaypalRestBundle\Plugin;
 use JMS\Payment\CoreBundle\Model\FinancialTransactionInterface;
 use JMS\Payment\CoreBundle\Model\PaymentInstructionInterface;
 use JMS\Payment\CoreBundle\Plugin\GatewayPlugin;
+use JMS\Payment\CoreBundle\Plugin\PluginInterface;
+use PayPal\Rest\ApiContext;
+use PayPal\Auth\OAuthTokenCredential;
+use PayPal\Api\Address;
+use PayPal\Api\Amount;
+use PayPal\Api\Payer;
+use PayPal\Api\Payment;
+use PayPal\Api\FundingInstrument;
+use PayPal\Api\RedirectUrls;
+use PayPal\Api\Transaction;
+use PayPal\Api\ItemList;
+use PayPal\Api\Item;
+
 /*
  * Copyright 2013 Ilya Biryukov <ilya@wannawork.ie>
  *
@@ -22,11 +35,64 @@ use JMS\Payment\CoreBundle\Plugin\GatewayPlugin;
 
 class PaypalRestPlugin extends GatewayPlugin
 {
+    /**
+     * URL To return to after successful transaction
+     * @var string
+     */
+    private $successUrl;
     
-    public function __constuct($isDebug)
+    /**
+     * URL to return after unsuccessful transaction
+     * @var string
+     */
+    private $cancelUrl;
+    
+    private $clientId;
+    
+    private $secret;
+    
+    private $paypalApiOptions;
+    
+    public function __construct($successUrl, $cancelUrl, $clientId, $secret, array $paypalApiOptions)
     {
+        if (!in_array($paypalApiOptions['service.mode'], array('sandbox', 'live'), true)) {
+            throw new \InvalidArgumentException(
+        	    sprintf(
+        	        "Invalid Paypal option 'service.mode': %s. Allowed options: 'sandbox' or 'live'", 
+        	        $paypalApiOptions['service.mode']
+                )
+            );    
+        }
+        $isDebug = $paypalApiOptions['service.mode'] === 'sandbox';
+        $this->successUrl = $successUrl;
+        $this->cancelUrl = $cancelUrl;
+        $this->clientId = $clientId;
+        $this->secret = $secret;
+        $this->paypalApiOptions = $paypalApiOptions;
         parent::__construct($isDebug);
+    }
+    
+    
+    
+    /**
+     * Create API Context getting paypal token
+     * @return \PayPal\Rest\ApiContext
+     */
+    private function createContext()
+    {
+        $clientId = $this->clientId;
+        $secret = $this->secret;
+        $paypalApiOptions = $this->paypalApiOptions;
         
+        $apiContext = new ApiContext(new OAuthTokenCredential($clientId, $secret));
+        $apiContext->setConfig(array(
+            'mode' => $paypalApiOptions['service.mode'],
+            'http.ConnectionTimeOut' => $paypalApiOptions['http.connection_timeout'],
+            'log.LogEnabled' => $paypalApiOptions['log.log_enabled'],
+            'log.FileName' => $paypalApiOptions['log.file_name'],
+            'log.LogLevel' => $paypalApiOptions['log.log_level']
+        ));
+        return $apiContext;
     }
     
     /**
@@ -45,59 +111,80 @@ class PaypalRestPlugin extends GatewayPlugin
      */
     function approve(FinancialTransactionInterface $transaction, $retry)
     {
+        $extendedData = $transaction->getExtendedData();
+        $paymentInstruction = $transaction->getPayment()->getPaymentInstruction();
+        // ### Payer
+        // A resource representing a Payer that funds a payment
+        // Use the List of `FundingInstrument` and the Payment Method
+        // as 'credit_card'
+        $payer = new Payer();
+        $payer->setPayment_method("paypal");
         
-    }
-    
-    /**
-     * This method executes a deposit transaction without prior approval
-     * (aka "sale", or "authorization with capture" transaction).
-     *
-     * A typical use case for this method is an electronic check payments
-     * where authorization is not supported. It can also be used to deposit
-     * money in only one transaction, and thus saving processing fees for
-     * another transaction.
-     *
-     * @param FinancialTransactionInterface $transaction
-     * @param boolean $retry
-     * @return void
-    */
-    function approveAndDeposit(FinancialTransactionInterface $transaction, $retry)
-    {
+        // ### Amount
+        // Let's you specify a payment amount.
+        $amount = new Amount();
+        $amount->setCurrency("USD");
+        $amount->setTotal($paymentInstruction->getAmount());
         
-    }
-    
-    /**
-     * This method checks whether all required parameters exist in the given
-     * PaymentInstruction, and whether they are syntactically correct.
-     *
-     * This method is meant to perform a fast parameter validation; no connection
-     * to any payment back-end system should be made at this stage.
-     *
-     * In case, this method is not implemented. The PaymentInstruction will
-     * be considered to be valid.
-     *
-     * @param PaymentInstructionInterface $paymentInstruction
-     * @throws JMS\Payment\CoreBundle\Plugin\Exception\InvalidPaymentInstructionException if the the PaymentInstruction is not valid
-     * @return void
-    */
-    function checkPaymentInstruction(PaymentInstructionInterface $paymentInstruction)
-    {
+        // ### Transaction
+        // A transaction defines the contract of a
+        // payment - what is the payment for and who
+        // is fulfilling it. Transaction is created with
+        // a `Payee` and `Amount` types
+        $paypalTran = new Transaction();
+        $paypalTran->setAmount($amount);
+        $paypalTran->setDescription("This is the payment description.");
         
-    }
-    
-    /**
-     * This method executes a credit transaction (aka refund transaction).
-     *
-     * This method is called for dependent (has prior deposit), and independent
-     * credits. The associated payment can be retrieved via the Credit object
-     * associated with the transaction.
-     *
-     * @param FinancialTransactionInterface $transaction
-     * @param boolean $retry
-     * @return void
-    */
-    function credit(FinancialTransactionInterface $transaction, $retry)
-    {
+        // ### Redirect urls
+        // Set the urls that the buyer must be redirected to after 
+        // payment approval/ cancellation.
+        $baseUrl = 'http://wannawork.ie/';
+        $redirectUrls = new RedirectUrls();
+        $redirectUrls->setReturn_url("$baseUrl/ExecutePayment.php?success=true");
+        $redirectUrls->setCancel_url("$baseUrl/ExecutePayment.php?success=false");
+        
+        // ### Payment
+        // A Payment Resource; create one using
+        // the above types and intent as 'sale'
+        $payment = new Payment();
+        $payment->setIntent("sale");
+        $payment->setPayer($payer);
+        $payment->setRedirect_urls($redirectUrls);
+        $payment->setTransactions(array($paypalTran));
+        
+        // ### Create Payment
+        // Create a payment by posting to the APIService
+        // using a valid apiContext.
+        // (See bootstrap.php for more on `ApiContext`)
+        // The return object contains the status and the
+        // url to which the buyer must be redirected to
+        // for payment approval
+        try {
+            $apiContext = $this->createContext();
+            $payment->create($apiContext);
+            
+        } catch (\PayPal\Exception\PPConnectionException $ex) {
+            $newEx = new \JMS\Payment\CoreBundle\Plugin\Exception\FinancialException(
+        	    "Could not get approval for payment",
+                null,
+                $ex
+            );
+            
+            $extendedData->set('paypal_response', is_array($ex->getData()) ? 
+                json_encode($ex->getData()) : $ex->getData());
+            $transaction->setResponseCode('Failed');
+            $transaction->setReasonCode('PaymentActionFailed');
+            $newEx->setFinancialTransaction($transaction);
+            throw $newEx;
+        }
+        
+        // ### Redirect buyer to paypal
+        // Retrieve buyer approval url from the `payment` object.
+        foreach($payment->getLinks() as $link) {
+        	if($link->getRel() == 'approval_url') {
+        		$redirectUrl = $link->getHref();
+        	}
+        }
         
     }
     
@@ -119,59 +206,6 @@ class PaypalRestPlugin extends GatewayPlugin
     }
     
     /**
-     * This method cancels a previously approved payment.
-     *
-     * @throws InvalidDataException if a partial amount is passed, but this is
-     *                              not supported by the payment backend system
-     * @param FinancialTransactionInterface $transaction
-     * @param boolean $retry
-     * @return void
-    */
-    function reverseApproval(FinancialTransactionInterface $transaction, $retry)
-    {
-        
-    }
-    
-    /**
-     * This method cancels a previously issued Credit.
-     *
-     * @throws InvalidDataException if a partial amount is passed, but this is
-     *                              not supported by the payment backend system
-     * @param FinancialTransactionInterface $transaction
-     * @param boolean $retry
-     * @return void
-    */
-    function reverseCredit(FinancialTransactionInterface $transaction, $retry)
-    {
-        
-    }
-    
-    /**
-     * This method cancels a previously deposited amount.
-     *
-     * @throws InvalidDataException if a partial amount is passed, but this is
-     *                              not supported by the payment backend system
-     * @param FinancialTransactionInterface $transaction
-     * @param boolean $retry
-     * @return void
-    */
-    function reverseDeposit(FinancialTransactionInterface $transaction, $retry);
-    
-    /**
-     * This method validates the correctness, and existence of any account
-     * associated with the PaymentInstruction object.
-     *
-     * This method performs a more thorough validation than checkPaymentInstruction,
-     * in that it may actually connect to the payment backend system; no funds should
-     * be transferred, though.
-     *
-     * @throws JMS\Payment\CoreBundle\Plugin\Exception\InvalidPaymentInstructionException if the PaymentInstruction is not valid
-     * @param PaymentInstructionInterface $paymentInstruction
-     * @return void
-    */
-    function validatePaymentInstruction(PaymentInstructionInterface $paymentInstruction);
-    
-    /**
      * Whether this plugin can process payments for the given payment system.
      *
      * A plugin may support multiple payment systems. In these cases, the requested
@@ -182,20 +216,23 @@ class PaypalRestPlugin extends GatewayPlugin
      * @param string $paymentSystemName
      * @return boolean
     */
-    function processes($paymentSystemName);
-    
-    /**
-     * Whether independent credit is supported by this plugin.
-     *
-     * Dependent Credit: The Credit depends on the existence of a Payment, and
-     * the Credit's amount must not be greater than the deposited amount of the
-     * related Payment.
-     *
-     * Independent Credit: The Credit does not depend on a Payment, but can be
-     * awarded "independently" to a PaymentInstruction. The amount is not restricted
-     * by any deposited amount.
-     *
-     * @return boolean
-    */
-    function isIndependentCreditSupported();
+    function processes($paymentSystemName)
+    {
+        return $paymentSystemName === 'paypal_rest';
+    }
+
+    public function getSuccessUrl()
+    {
+        return $this->successUrl;
+    }
+
+    public function getCancelUrl()
+    {
+        return $this->cancelUrl;
+    }
+
+    public function getPaypalApiOptions()
+    {
+        return $this->paypalApiOptions;
+    }
 }

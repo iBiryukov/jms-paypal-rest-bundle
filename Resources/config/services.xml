@@ -20,11 +20,25 @@
 		 -->
 		<parameter key="wanawork_jms_paypal_rest.client_id">EBWKjlELKMYqRNQ6sYvFo64FtaRLRR5BdHEESmha49TM</parameter>
 		<parameter key="wanawork_jms_paypal_rest.secret">EO422dn3gQLgDbuwqTjzrFgFtaRLRR5BdHEESmha49TM</parameter>
+		<parameter key="wanawork_jms_paypal_rest.success_url" />
+		<parameter key="wanawork_jms_paypal_rest.cancel_url" />
 		
 	</parameters>
 	
 	<services>
-		<service id="payment.plugin.paypal_rest" class="%wanawork_jms_paypal_rest.plugin.class%">
+		<service id="wanawork_jms_paypal_rest.example.class" class="%wanawork_jms_paypal_rest.plugin.class%">
+		    <argument>%wanawork_jms_paypal_rest.success_url%</argument>
+		    <argument>%wanawork_jms_paypal_rest.cancel_url%</argument>
+		    <argument>%wanawork_jms_paypal_rest.client_id%</argument>
+		    <argument>%wanawork_jms_paypal_rest.secret%</argument>
+		    <argument type="collection">
+		    	<argument key="http.connection_timeout">%wanawork_jms_paypal_rest.paypal.http.connection_timeout%</argument>
+		    	<argument key="http.retry">%wanawork_jms_paypal_rest.paypal.http.retry%</argument>
+		    	<argument key="service.mode">%wanawork_jms_paypal_rest.paypal.service.mode%</argument>
+		    	<argument key="log.log_enabled">%wanawork_jms_paypal_rest.paypal.log.log_enabled%</argument>
+		    	<argument key="log.file_name">%wanawork_jms_paypal_rest.paypal.log.file_name%</argument>
+		    	<argument key="log.log_level">%wanawork_jms_paypal_rest.paypal.log.log_level%</argument>
+		    </argument>
 		    <tag name="payment.plugin" />
 		</service>
 	</services>

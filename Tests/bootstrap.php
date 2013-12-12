@@ -1,7 +1,14 @@
 <?php
-$file = __DIR__.'/../vendor/autoload.php';
-if (!file_exists($file)) {
-    throw new RuntimeException('Install dependencies to run test suite. "php composer.phar install --dev"');
+
+use Doctrine\Common\Annotations\AnnotationRegistry;
+
+// Composer
+if (file_exists(__DIR__.'/../vendor/autoload.php')) {
+    $loader = require_once __DIR__.'/../vendor/autoload.php';
+
+    AnnotationRegistry::registerLoader(array($loader, 'loadClass'));
+
+    return $loader;
 }
 
-require_once $file;
+throw new \RuntimeException('Could not find vendor/autoload.php, make sure you ran composer.');

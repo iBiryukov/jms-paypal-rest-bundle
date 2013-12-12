@@ -18,10 +18,6 @@ class WanaworkJMSPaypalRestExtension extends Extension
      */
     public function load(array $configs, ContainerBuilder $container)
     {
-        if (!$container->hasParameter('kernel.logs_dir')) {
-            $container->setParameter('kernel.logs_dir', sys_get_temp_dir());
-        }
-        
         $loader = new Loader\XmlFileLoader($container, new FileLocator(__DIR__.'/../Resources/config'));
         $loader->load('services.xml');
         
@@ -58,6 +54,14 @@ class WanaworkJMSPaypalRestExtension extends Extension
         
         if (isset($config['client_id'])) {
             $container->setParameter('wanawork_jms_paypal_rest.client_id', $config['client_id']);
+        }
+        
+        if (isset($config['success_url'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.success_url', $config['success_url']);
+        }
+        
+        if (isset($config['cancel_url'])) {
+            $container->setParameter('wanawork_jms_paypal_rest.cancel_url', $config['cancel_url']);
         }
     }
 }

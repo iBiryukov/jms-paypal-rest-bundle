@@ -9,7 +9,8 @@ class ConfigurationTest extends \PHPUnit_Framework_TestCase
     
     public function testConfigLoad()
     {
-        $config = array('paypal' => array(
+        $config = array(
+            'paypal' => array(
             	'http' => array(
             	    'retry' => 2,
             	    'connection_timeout' => 2,
@@ -25,6 +26,8 @@ class ConfigurationTest extends \PHPUnit_Framework_TestCase
             ),
             'client_id' => 'test',
             'secret' => 'test',
+            'cancel_url' => 'http://localhost/cancel',
+            'success_url' => 'http://localhost/success'
         );
         
         
@@ -81,7 +84,7 @@ class ConfigurationTest extends \PHPUnit_Framework_TestCase
     public function testPluginIsRegisteredWithJMSCore()
     {
         $this->extension->load($this->getDefaultConfig(), $container = $this->getContainer());
-        $this->assertTrue($container->getDefinition('payment.plugin.paypal_rest')->hasTag('payment.plugin'));
+        $this->assertTrue($container->getDefinition('wanawork_jms_paypal_rest.example.class')->hasTag('payment.plugin'));
     }
     
     public function testClientIdIsRequired()
@@ -92,6 +95,7 @@ class ConfigurationTest extends \PHPUnit_Framework_TestCase
         
         try {
             $this->extension->load($config, $container = $this->getContainer());
+            $container->compile();
             $this->fail('Expected an expection');
         } catch (\Symfony\Component\Config\Definition\Exception\InvalidConfigurationException $e) {
             $message = 'The child node "client_id" at path "wanawork_jms_paypal_rest" must be configured.';
@@ -108,6 +112,7 @@ class ConfigurationTest extends \PHPUnit_Framework_TestCase
     
         try {
             $this->extension->load($config, $container = $this->getContainer());
+            $container->compile();
             $this->fail('Expected an expection');
         } catch (\Symfony\Component\Config\Definition\Exception\InvalidConfigurationException $e) {
             $message = 'The child node "secret" at path "wanawork_jms_paypal_rest" must be configured.';
@@ -124,8 +129,10 @@ class ConfigurationTest extends \PHPUnit_Framework_TestCase
     private function getContainer()
     {
         $container = new ContainerBuilder();
-        $container->setParameter('kernel.cache_dir', sys_get_temp_dir());
-        $container->setParameter('kernel.bundles', array('WanaworkJMSPaypalRestBundle' => 'Wanawork\JMS\PaypalRestBundle'));
+        $container->setParameter('kernel.logs_dir', sys_get_temp_dir());
+        $container->setParameter('kernel.bundles', array(
+            'WanaworkJMSPaypalRestBundle' => 'Wanawork\JMS\PaypalRestBundle'
+        ));
     
         return $container;
     }
@@ -135,7 +142,9 @@ class ConfigurationTest extends \PHPUnit_Framework_TestCase
         return array(
         	array(
         	    'secret' => 'test',
-        	    'client_id' => 'test'
+        	    'client_id' => 'test',
+        	    'cancel_url' => 'http://localhost/cancel',
+        	    'success_url' => 'http://localhost/success'
             )
         );
     }
