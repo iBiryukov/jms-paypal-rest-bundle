@@ -5,6 +5,11 @@ use JMS\Payment\CoreBundle\Model\FinancialTransactionInterface;
 use JMS\Payment\CoreBundle\Model\PaymentInstructionInterface;
 use JMS\Payment\CoreBundle\Plugin\GatewayPlugin;
 use JMS\Payment\CoreBundle\Plugin\PluginInterface;
+use JMS\Payment\CoreBundle\Plugin\Exception\Action\VisitUrl;
+use JMS\Payment\CoreBundle\Plugin\Exception\FinancialException;
+use JMS\Payment\CoreBundle\Plugin\Exception\InternalErrorException;
+use JMS\Payment\CoreBundle\Plugin\Exception\BlockedException;
+
 use PayPal\Rest\ApiContext;
 use PayPal\Auth\OAuthTokenCredential;
 use PayPal\Api\Address;
@@ -16,6 +21,7 @@ use PayPal\Api\RedirectUrls;
 use PayPal\Api\Transaction;
 use PayPal\Api\ItemList;
 use PayPal\Api\Item;
+use PayPal\Api\PaymentExecution;
 
 /*
  * Copyright 2013 Ilya Biryukov <ilya@wannawork.ie>
@@ -111,66 +117,55 @@ class PaypalRestPlugin extends GatewayPlugin
      */
     function approve(FinancialTransactionInterface $transaction, $retry)
     {
-        $extendedData = $transaction->getExtendedData();
-        $paymentInstruction = $transaction->getPayment()->getPaymentInstruction();
-        // ### Payer
-        // A resource representing a Payer that funds a payment
-        // Use the List of `FundingInstrument` and the Payment Method
-        // as 'credit_card'
-        $payer = new Payer();
-        $payer->setPayment_method("paypal");
+        if ($transaction->getState() === FinancialTransactionInterface::STATE_NEW) {
+            $this->createPayment($transaction);
+        } elseif($transaction->getState() === FinancialTransactionInterface::STATE_PENDING) {
+            $this->approvePayment($transaction);
+        } else {
+            throw new \JMS\Payment\CoreBundle\Plugin\Exception\InvalidDataException(
+                sprintf("Transaction canno be approved because its state is %s", $transaction->getState())
+            );
+        }
+    }
+    
+    private function approvePayment(FinancialTransactionInterface $transaction)
+    {
+        $pendingTransaction = $transaction->getPayment()->getPendingTransaction();
+        if ($pendingTransaction === null || !$pendingTransaction->getTrackingId()) {
+            throw new InternalErrorException("Cannot approve payment with no pending approve transcation");
+        }                
         
-        // ### Amount
-        // Let's you specify a payment amount.
-        $amount = new Amount();
-        $amount->setCurrency("USD");
-        $amount->setTotal($paymentInstruction->getAmount());
-        
-        // ### Transaction
-        // A transaction defines the contract of a
-        // payment - what is the payment for and who
-        // is fulfilling it. Transaction is created with
-        // a `Payee` and `Amount` types
-        $paypalTran = new Transaction();
-        $paypalTran->setAmount($amount);
-        $paypalTran->setDescription("This is the payment description.");
-        
-        // ### Redirect urls
-        // Set the urls that the buyer must be redirected to after 
-        // payment approval/ cancellation.
-        $baseUrl = 'http://wannawork.ie/';
-        $redirectUrls = new RedirectUrls();
-        $redirectUrls->setReturn_url("$baseUrl/ExecutePayment.php?success=true");
-        $redirectUrls->setCancel_url("$baseUrl/ExecutePayment.php?success=false");
-        
-        // ### Payment
-        // A Payment Resource; create one using
-        // the above types and intent as 'sale'
-        $payment = new Payment();
-        $payment->setIntent("sale");
-        $payment->setPayer($payer);
-        $payment->setRedirect_urls($redirectUrls);
-        $payment->setTransactions(array($paypalTran));
-        
-        // ### Create Payment
-        // Create a payment by posting to the APIService
-        // using a valid apiContext.
-        // (See bootstrap.php for more on `ApiContext`)
-        // The return object contains the status and the
-        // url to which the buyer must be redirected to
-        // for payment approval
         try {
             $apiContext = $this->createContext();
-            $payment->create($apiContext);
+            $paymentId = $pendingTransaction->getTrackingId();
+            $payment = Payment::get($paymentId, $apiContext);
             
-        } catch (\PayPal\Exception\PPConnectionException $ex) {
-            $newEx = new \JMS\Payment\CoreBundle\Plugin\Exception\FinancialException(
-        	    "Could not get approval for payment",
+            if ($payment->getState() !== 'created') {
+                throw new FinancialException(
+                    sprintf('Cannot approve payment. Expected payment state "created", got: "%s"', $payment->getState())
+                );
+            }
+             
+            $transaction->setTrackingId($payment->getId());
+            $transaction->setTransactionType('payment-id');
+            $transaction->setResponseCode(PluginInterface::RESPONSE_CODE_SUCCESS);
+            $transaction->setReasonCode(PluginInterface::REASON_CODE_SUCCESS);
+            $extendedData->set('state', $payment->getState());
+            $extendedData->set('create_time', $payment->getCreateTime());
+            $extendedData->set('update_time', $payment->getUpdateTime());
+            $extendedData->set('links', $payment->getLinks()->toArray());
+        } catch (\PayPal\Exception\PPConnectionException $e) {
+            if ($payment->__isset('state')) {
+                $transaction->setResponseCode($payment->getState());
+            }
+            
+            $newEx = new FinancialException(
+                "Could not get approval for payment",
                 null,
                 $ex
             );
             
-            $extendedData->set('paypal_response', is_array($ex->getData()) ? 
+            $extendedData->set('paypal_response', is_array($ex->getData()) ?
                 json_encode($ex->getData()) : $ex->getData());
             $transaction->setResponseCode('Failed');
             $transaction->setReasonCode('PaymentActionFailed');
@@ -178,13 +173,84 @@ class PaypalRestPlugin extends GatewayPlugin
             throw $newEx;
         }
         
-        // ### Redirect buyer to paypal
-        // Retrieve buyer approval url from the `payment` object.
-        foreach($payment->getLinks() as $link) {
-        	if($link->getRel() == 'approval_url') {
-        		$redirectUrl = $link->getHref();
-        	}
+    }
+    
+    private function createPayment(FinancialTransactionInterface $transaction)
+    {
+        $extendedData = $transaction->getExtendedData();
+        $paymentInstruction = $transaction->getPayment()->getPaymentInstruction();
+        
+        $payer = new Payer();
+        $payer->setPayment_method("paypal");
+        
+        $amount = new Amount();
+        $amount->setCurrency($paymentInstruction->getCurrency());
+        $amount->setTotal($transaction->getRequestedAmount());
+        
+        $paypalTran = new Transaction();
+        $paypalTran->setAmount($amount);
+        
+        $successUrl = $this->successUrl;
+        $successUrl .= (strpos($successUrl, '?') === false) ?
+        "?payment={$transaction->getPayment()->getId()}" : "&payment={$transaction->getPayment()->getId()}";
+        
+        $redirectUrls = new RedirectUrls();
+        $redirectUrls->setReturn_url($successUrl);
+        $redirectUrls->setCancel_url($this->cancelUrl);
+        
+        $payment = new Payment();
+        $payment->setIntent("sale");
+        $payment->setPayer($payer);
+        $payment->setRedirect_urls($redirectUrls);
+        $payment->setTransactions(array($paypalTran));
+        
+        try {
+            $apiContext = $this->createContext();
+            $payment->create($apiContext);
+            
+            if ($payment->getState() !== 'created') {
+                throw new FinancialException();
+            }
+            
+            $transaction->setTrackingId($payment->getId());
+            $transaction->setTransactionType('payment-id');
+            $transaction->setResponseCode(PluginInterface::RESPONSE_CODE_SUCCESS);
+            $transaction->setReasonCode(PluginInterface::REASON_CODE_SUCCESS);
+            $extendedData->set('state', $payment->getState());
+            $extendedData->set('create_time', $payment->getCreateTime());
+            $extendedData->set('update_time', $payment->getUpdateTime());
+            
+            foreach($payment->getLinks() as $link) {
+                if($link->getRel() == 'approval_url') {
+                    $extendedData->set('approval_url', $link->getHref());
+                }
+            }
+        } catch (\PayPal\Exception\PPConnectionException $ex) {
+            if ($payment->__isset('state')) {
+                $transaction->setResponseCode($payment->getState());
+            }
+        
+            $newEx = new \JMS\Payment\CoreBundle\Plugin\Exception\FinancialException(
+                "Could not get approval for payment",
+                null,
+                $ex
+            );
+        
+            $extendedData->set('paypal_response', is_array($ex->getData()) ?
+                json_encode($ex->getData()) : $ex->getData());
+            $transaction->setResponseCode('Failed');
+            $transaction->setReasonCode('PaymentActionFailed');
+            $newEx->setFinancialTransaction($transaction);
+            throw $newEx;
         }
+        
+        $actionRequest = new \JMS\Payment\CoreBundle\Plugin\Exception\ActionRequiredException(
+            'User has not yet authorized the transaction.'
+        );
+        $actionRequest->setFinancialTransaction($transaction);
+        $actionRequest->setAction(new VisitUrl($extendedData->get('approval_url')));
+        
+        throw $actionRequest;
         
     }
     
@@ -202,7 +268,57 @@ class PaypalRestPlugin extends GatewayPlugin
     */
     function deposit(FinancialTransactionInterface $transaction, $retry)
     {
-        
+        try {
+            // Get the payment Object by passing paymentId
+            // payment id was previously stored in session in
+            $paymentInstruction = $transaction->getPayment()->getPaymentInstruction();
+            $approveTransaction = $transaction->getPayment()->getApproveTransaction();
+            if ($approveTransaction === null) {
+                throw new \Exception(
+                    'Payment is missing "approve" transaction'
+                );
+            }
+            
+            $apiContext = $this->createContext();
+            $paymentId = $approveTransaction->getTrackingId();
+            $payment = Payment::get($paymentId, $apiContext);
+            
+            if ($payment->getState() !== 'approved') {
+                $e = new FinancialException(
+        	       sprintf("Payment was not approved. Status: '%s'", $payment->getState())
+                );
+                $e->setFinancialTransaction($transaction);
+                $transaction->getReasonCode('Payment status: ' . (strlen($payment->getState())) ? $payment->getState() : 'Failed');
+                throw $e;
+            }
+            
+            $execution = new PaymentExecution();
+            $execution->setPayer_id($payment->getPayer()->getPayerInfo()->getPayerId());
+            $completedPayment = $payment->execute($execution, $apiContext);
+            
+            $transaction->setTrackingId($completedPayment->getId());
+            $transaction->setTransactionType('payment-id');
+            $transaction->setResponseCode(PluginInterface::RESPONSE_CODE_SUCCESS);
+            $transaction->setReasonCode(PluginInterface::REASON_CODE_SUCCESS);
+            $extendedData->set('state', $completedPayment->getState());
+            $extendedData->set('create_time', $completedPayment->getCreateTime());
+            $extendedData->set('update_time', $completedPayment->getUpdateTime());
+        	
+        } catch (\PayPal\Exception\PPConnectionException $ex) {
+            
+            $newEx = new FinancialException(
+                "Could not get approval for payment",
+                null,
+                $ex
+            );
+            
+            $extendedData->set('paypal_response', is_array($ex->getData()) ?
+                json_encode($ex->getData()) : $ex->getData());
+            $transaction->setResponseCode('Failed');
+            $transaction->setReasonCode('DepositActionFailed');
+            $newEx->setFinancialTransaction($transaction);
+            throw $newEx;
+        }
     }
     
     /**
@@ -234,5 +350,16 @@ class PaypalRestPlugin extends GatewayPlugin
     public function getPaypalApiOptions()
     {
         return $this->paypalApiOptions;
+    }
+    
+    /**
+     * Get info about the given payment from paypal
+     * @param string $paymentId
+     * @return \PayPal\Api\Payment
+     */
+    public function getPayment($paymentId)
+    {
+        $apiContext = $this->createContext();
+        return Payment::get($paymentId, $apiContext);
     }
 }
